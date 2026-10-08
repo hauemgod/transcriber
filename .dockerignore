@@ -1,0 +1,5 @@
+__pycache__
+*.pyc
+.git
+*.m4a
+test2.py

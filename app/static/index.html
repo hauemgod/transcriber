@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Whisper Transcriber</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 640px;
+    margin: 48px auto;
+    padding: 0 16px;
+    background: #fafafa;
+    color: #111;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #121212; color: #eee; }
+    textarea, .dropzone { background: #1e1e1e !important; color: #eee !important; border-color: #444 !important; }
+    button { background: #333 !important; color: #eee !important; }
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  p.sub { color: #777; margin-top: 0; }
+  .badge {
+    display: inline-block;
+    font-size: 0.8rem;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: #e8f0fe;
+    color: #1a56db;
+    margin-bottom: 16px;
+  }
+  .badge.gpu { background: #e6f7ec; color: #0f7b3f; }
+  .controls { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .controls label { font-size: 0.9rem; color: #555; }
+  select {
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    font-size: 0.9rem;
+    background: #fff;
+  }
+  @media (prefers-color-scheme: dark) {
+    select { background: #1e1e1e; color: #eee; border-color: #444; }
+    .badge { background: #16294d; color: #8ab4ff; }
+    .badge.gpu { background: #123822; color: #6fd99a; }
+  }
+  .dropzone {
+    border: 2px dashed #aaa;
+    border-radius: 10px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    background: #fff;
+  }
+  .dropzone.drag { border-color: #4a7dff; background: #eef3ff; }
+  input[type=file] { display: none; }
+  #status { margin-top: 16px; font-size: 0.95rem; }
+  textarea {
+    width: 100%;
+    height: 240px;
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: vertical;
+    box-sizing: border-box;
+  }
+  .actions { margin-top: 12px; display: flex; gap: 8px; }
+  button {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+    background: #fff;
+    cursor: pointer;
+    font-size: 0.9rem;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid #ccc;
+    border-top-color: #4a7dff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+  <h1>Audio Transcriber</h1>
+  <p class="sub">Upload an audio file, get a text transcript.</p>
+
+  <span class="badge" id="deviceBadge">Checking device…</span>
+
+  <div class="controls">
+    <label for="modelSelect">Model:</label>
+    <select id="modelSelect"></select>
+  </div>
+
+  <div class="dropzone" id="dropzone">
+    <div id="dzLabel">Drop an audio file here, or click to choose one</div>
+    <input type="file" id="fileInput" accept="audio/*,video/*" />
+  </div>
+
+  <div id="status"></div>
+
+  <textarea id="output" placeholder="Transcript will appear here…" class="hidden"></textarea>
+
+  <div class="actions hidden" id="actions">
+    <button id="copyBtn">Copy to clipboard</button>
+    <button id="downloadBtn">Download .txt</button>
+  </div>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const dzLabel = document.getElementById('dzLabel');
+    const fileInput = document.getElementById('fileInput');
+    const statusEl = document.getElementById('status');
+    const output = document.getElementById('output');
+    const actions = document.getElementById('actions');
+    const copyBtn = document.getElementById('copyBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const deviceBadge = document.getElementById('deviceBadge');
+    const modelSelect = document.getElementById('modelSelect');
+
+    // Load device info + available models as soon as the page opens.
+    (async function loadHealth() {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+
+        const isGpu = data.device === 'cuda';
+        deviceBadge.textContent = isGpu ? `GPU · ${data.device_label}` : 'CPU';
+        deviceBadge.classList.toggle('gpu', isGpu);
+
+        modelSelect.innerHTML = '';
+        for (const name of data.models) {
+          const opt = document.createElement('option');
+          opt.value = name;
+          opt.textContent = name === data.default_model ? `${name} (default)` : name;
+          if (name === data.default_model) opt.selected = true;
+          modelSelect.appendChild(opt);
+        }
+      } catch (e) {
+        deviceBadge.textContent = 'Device unknown';
+      }
+    })();
+
+    dropzone.addEventListener('click', () => fileInput.click());
+
+    ['dragenter', 'dragover'].forEach(evt =>
+      dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); })
+    );
+    ['dragleave', 'drop'].forEach(evt =>
+      dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); })
+    );
+    dropzone.addEventListener('drop', e => {
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) handleFile(fileInput.files[0]);
+    });
+
+    async function handleFile(file) {
+      dzLabel.textContent = `Selected: ${file.name}`;
+      output.classList.add('hidden');
+      actions.classList.add('hidden');
+      statusEl.innerHTML = '<span class="spinner"></span>Transcribing… first run of a new model also downloads its weights, so it can take a while.';
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('model', modelSelect.value);
+
+      try {
+        const res = await fetch('/api/transcribe', { method: 'POST', body: formData });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Server error (${res.status})`);
+        }
+        const data = await res.json();
+        output.value = data.text.trim();
+        output.classList.remove('hidden');
+        actions.classList.remove('hidden');
+        statusEl.textContent = 'Done.';
+      } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+      }
+    }
+
+    copyBtn.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(output.value);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => (copyBtn.textContent = 'Copy to clipboard'), 1500);
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      const blob = new Blob([output.value], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'transcript.txt';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>

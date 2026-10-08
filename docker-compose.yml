@@ -1,0 +1,19 @@
+services:
+  transcriber:
+    # Pulled from GHCR — see README/chat for the push steps.
+    # Swap back to `build: .` if you'd rather build on the NAS itself.
+    image: ghcr.io/<your-github-username>/transcriber:latest
+    container_name: transcriber
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Model loaded at startup; tiny/base/small/medium/turbo/large.
+      # Users can still pick a different one per-request from the UI.
+      WHISPER_MODEL: base
+    volumes:
+      # Keeps downloaded model weights across container restarts/updates.
+      - whisper-cache:/srv/.cache
+
+volumes:
+  whisper-cache:

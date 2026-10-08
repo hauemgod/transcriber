@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+
+# Personal audio sample used for local testing, not part of the app
+Recording.m4a
