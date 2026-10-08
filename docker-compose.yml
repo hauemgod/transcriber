@@ -1,8 +1,7 @@
 services:
   transcriber:
-    # Pulled from GHCR — see README/chat for the push steps.
-    # Swap back to `build: .` if you'd rather build on the NAS itself.
-    image: ghcr.io/<your-github-username>/transcriber:latest
+    # Pulled from GHCR (public, no login needed to pull).
+    image: ghcr.io/hauemgod/transcriber:latest
     container_name: transcriber
     restart: unless-stopped
     ports:
